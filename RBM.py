@@ -1,4 +1,7 @@
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
 
 class RBM():
     def __init__(self, d, l, DEVICE, real=True, gaussian=False, var=None):
@@ -153,3 +156,57 @@ class RBM():
         self.w += lr*(Qw_hat/(1e-8 + Rw_hat))
         self.b += lr*(Qb_hat/(1e-8 + Rb_hat))
         self.c += lr*(Qc_hat/(1e-8 + Rc_hat))
+        
+    def train(self, dataset, k, EPOCH, BATCH_SIZE, LR=1e-3):
+        mse = nn.MSELoss()
+        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE,
+                                shuffle=True, num_workers=0)
+        loss_plot = []
+        for epoch in range(EPOCH):
+            running_loss = 0.0
+            for i, data in enumerate(dataloader, 0):
+                image = data.to(self.DEVICE)
+                
+                self.contrastive_divergence(k, image, optim="Adam", lr=LR)
+                
+                output = self.get_output(image)
+                loss = mse(image, output)
+                running_loss += loss.item()
+                
+                pr = 10
+                if i % pr == pr-1:
+                    print("[%d, %5d] loss: %.7f" % (epoch+1, i+1, running_loss/(i+1)))
+                    # running_loss = 0.0
+                    
+            loss_plot.append(running_loss/(i+1))
+        print("Finished Training")
+        reps = torch.zeros(len(dataset), self.l)
+        dataloader = DataLoader(dataset, batch_size=1,
+                                shuffle=False, num_workers=0)
+        for i, data in enumerate(dataloader, 0):
+            image = data.to(self.DEVICE)
+            _, reps[i] = self.sample_hidden(image)
+        return reps, loss_plot
+        
+
+class stacked_RBM(nn.Module):
+    def __init__(self, dims, weights=None, bias=None):
+        super(stacked_RBM, self).__init__()
+        self.fc1 = nn.Linear(dims[0], dims[1])
+        self.fc2 = nn.Linear(dims[1], dims[2])
+        self.fc3 = nn.Linear(dims[2], dims[3])
+        self.fc4 = nn.Linear(dims[3], dims[4])
+        if weights is not None:
+            self.fc1.weight = nn.Parameter(weights[0], requires_grad=True)
+            self.fc1.bias = nn.Parameter(bias[0], requires_grad=True)
+            self.fc2.weight = nn.Parameter(weights[1], requires_grad=True)
+            self.fc2.bias = nn.Parameter(bias[1], requires_grad=True)
+            self.fc3.weight = nn.Parameter(weights[2], requires_grad=True)
+            self.fc3.bias = nn.Parameter(bias[2], requires_grad=True)
+        
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        x = self.fc4(x)
+        return x
